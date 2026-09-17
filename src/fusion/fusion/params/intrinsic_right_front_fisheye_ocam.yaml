@@ -1,0 +1,19 @@
+sensor information:
+  model: 3
+  sensor_id: 5
+image size:
+  width: 1920
+  height: 1080
+distortion center:
+  cx: 960.149993
+  cy: 541.925509
+affine coefficients:
+  c: 1.000218
+  d: -0.000117
+  e: -0.000329
+camera2world:
+  length_pol: 5
+  pol: [-4.171539e+02, 0.000000e+00, 3.547203e-04, 1.386751e-07, 1.982727e-10]
+world2camera:
+  length_invpol: 12
+  invpol: [829.545819, 624.855087, 24.149463, 46.481634, 84.842390, -17.391381, -0.715480, 71.155368, 28.791298, -28.337237, -22.910512, -4.578482]

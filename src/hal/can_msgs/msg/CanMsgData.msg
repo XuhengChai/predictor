@@ -1,0 +1,9 @@
+std_msgs/Header header
+string msg_name
+uint32 msg_id
+string msg_pgn
+uint32 src_id
+uint32 des_id
+bool has_msg_id
+bool is_extended
+CanSigData[] sig_datas
