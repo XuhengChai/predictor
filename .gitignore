@@ -4,9 +4,9 @@
 build/
 install/
 log/
-config/
-*.png
-*.jpg
+#config/
+#*.png
+#*.jpg
 *.pkl
 *.onnx
 *.pth

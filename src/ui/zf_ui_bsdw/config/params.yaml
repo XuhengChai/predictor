@@ -1,0 +1,3 @@
+zf_ui_bsdw:
+  ros__parameters:
+    enable_debug: True

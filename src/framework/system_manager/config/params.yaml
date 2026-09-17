@@ -1,0 +1,5 @@
+/node_system_manager:
+  ros__parameters:
+    use_image_raw: False
+    show_log_in_terminal: True
+    save_log_in_file: False
