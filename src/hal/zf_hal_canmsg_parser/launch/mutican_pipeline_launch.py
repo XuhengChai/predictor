@@ -100,7 +100,7 @@ def generate_launch_description():
                 'enable_debug_raw': 'false'
             }.items()
         )
-    launchs.append(t_launch)
+    # launchs.append(t_launch)
 
     t_launch = IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
@@ -121,6 +121,6 @@ def generate_launch_description():
                 'enable_debug_raw': 'false'
             }.items()
         )
-    launchs.append(t_launch)
+    # launchs.append(t_launch)
 
     return LaunchDescription(launchs)

@@ -28,6 +28,10 @@ setup(
         (os.path.join(
             'lib', f'python{sys.version_info.major}.{sys.version_info.minor}',
             'site-packages', package_name, 'ego_state_cv', 'params'), glob('params/*.yaml')),
+        (os.path.join(
+            'lib', f'python{sys.version_info.major}.{sys.version_info.minor}',
+            'site-packages', package_name, 'utility'),
+             glob(os.path.join('fusion', 'utility', '*.py'))),
         # (os.path.join(
         # 'lib',
         # f'python{sys.version_info.major}.{sys.version_info.minor}',

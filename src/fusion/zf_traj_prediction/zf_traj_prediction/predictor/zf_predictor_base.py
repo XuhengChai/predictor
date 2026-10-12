@@ -19,7 +19,9 @@ class BasePredictor(ABC):
 
     def inverse_calc(self, vx_avg: float, vy_avg: float, psi0: float, horizon: float = 3.0):
         theta = np.arctan2(vy_avg, vx_avg)
-        delta_psi = 2 * (theta - psi0)
+        dtheta = theta - psi0
+        delta_psi = 2 * np.arctan2(np.sin(dtheta), np.cos(dtheta))
+        # delta_psi = 2 * (theta - psi0)
         # delta_psi = (delta_psi + np.pi) % (2 * np.pi) - np.pi
         speed_norm = np.sqrt(vx_avg ** 2 + vy_avg ** 2)
         if np.abs(delta_psi) < 1e-6:
@@ -52,7 +54,8 @@ class BasePredictor(ABC):
         x, y, vel, yaw = cur_x, cur_y, cur_v, psi0
         for i in range(num_frames):
             if i < 7:
-                vel = vel + a * dt
+                # vel = vel + a * dt
+                vel = v
             else:
                 vel = v
             yaw = yaw + yaw_rate * dt

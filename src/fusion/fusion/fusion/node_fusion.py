@@ -6,10 +6,8 @@ Created on Fri Jan  5 12:39:33 2024
 """
 # ros2 launch zf_hal_sync sync_tracking_can_launch.py
 import rclpy
-import pandas as pd
 import numpy as np
 import threading
-import pickle
 import copy
 from rclpy.node import Node
 from enum import Enum, IntEnum
@@ -45,7 +43,7 @@ class Fusion(Node):
     def __init__(self, node_name):
         super().__init__(node_name)
 
-        self.declare_parameter("replay_rosbag", True)
+        self.declare_parameter("replay_rosbag", False)
         self.declare_parameter("show_time", False)
         self.declare_parameter("show_main_time", False)
         self.declare_parameter("record_result", False)
@@ -79,6 +77,8 @@ class Fusion(Node):
         self.ego_yawrate = 0.
         self.steer_angle = 0.
         self.artic_angle = 0.
+        self.t_ego = 0.
+        self.d_ego = {}
         self.scenario_id = "2026"
         self.frame_id = 0
 
@@ -100,6 +100,7 @@ class Fusion(Node):
         self.cam_objs = []
         self.cam_objs_pp = []
         self.predict_agents = []
+        self.predict_agents_original = []
         self.camera_timestamp = 0.0
         self.cam_objs_agents = HmiAgent()
         self.cam_objs_pp_agents = HmiAgent()
@@ -189,20 +190,28 @@ class Fusion(Node):
             self._publish_fused_data()
             self.frame_id += 1
         # self._publish_fused_result()
-  
 
-    def _data_synch(self):
-        start_time = self.get_clock().now()
-        self.cur_time = self.get_clock().now().nanoseconds * 1e-9
-        return
+    def _callback_vehicle_info(self, msg):
+        # TODO: if no vehicle info received???
+        self.t_ego = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+        if self.d_ego.get("t_ego") is None:
+            self.d_ego["t_diff"] = 0.0
+            self.d_ego["acceleration"] = 0.0
+            self.d_ego["steering_angle_rate"] = 0.0
+            self.d_ego["tractor_yawrate_rate"] = 0.0
+        else:
+            self.d_ego["t_diff"] = self.d_ego["t_ego"] - self.t_ego
+            self.d_ego["acceleration"] = (self.d_ego["v_ego"] - msg.v_ego) / self.d_ego["t_diff"] if abs(self.d_ego["t_diff"]) > 0.01 else 0.0
+            self.d_ego["steering_angle_rate"] = (self.d_ego["steering_angle"] - msg.steering_angle) / self.d_ego["t_diff"] if abs(self.d_ego["t_diff"]) > 0.01 else 0.0
+            self.d_ego["tractor_yawrate_rate"] = (self.d_ego["tractor_yawrate"] - msg.tractor_yawrate) / self.d_ego["t_diff"] if abs(self.d_ego["t_diff"]) > 0.01 else 0.0
+        self.d_ego["t_ego"] = self.t_ego
+        self.d_ego["v_ego"] = msg.v_ego
+        self.d_ego["steering_angle"] = msg.steering_angle
+        self.d_ego["tractor_yawrate"] = float(msg.tractor_yawrate) # rad/s
+        self.d_ego["artic_angle"] = msg.artic_angle
 
-    def _data_extrap(self, data, t_diff):
-        if data is None:
-            pass
-        elif len(data):
-            for k in data:
-                data[k]["pos_x"] = t_diff * data[k]["rel_spd_lon"] + data[k]["pos_x"]
-                data[k]["pos_y"] = t_diff * data[k]["rel_spd_lat"] + data[k]["pos_y"]
+        self._received_ego_data = True
+        self.artic_angle = msg.artic_angle
 
     def _callback_cam_preproc(self, msg):
         start_time = self.get_clock().now()
@@ -271,11 +280,11 @@ class Fusion(Node):
         with self.lock_cam_info:
             self.cam_objs_agents.agent = [row[:] for row in self.cam_objs]
             self.cam_objs_pp_agents.agent = [row[:] for row in self.cam_objs_pp]
-            self.predict_agents = [self._to_predict_agent(track_id, data)
-                                    for track_id, data in self.cam_postprc.d_pp.items()
-                                ]
             self.camera_timestamp = msg.time_stamp
             self._received_camera_data = True
+        self.predict_agents_original = [self._to_predict_agent(track_id, data)
+                        for track_id, data in self.cam_postprc.d_pp.items()
+                    ]
         if self.show_main_time:
             timecost = (self.get_clock().now()-start_time).nanoseconds / 1e9
             self.get_logger().info("CAM pp1 callback timecost: {} sec"
@@ -320,14 +329,7 @@ class Fusion(Node):
         agent_msg.obj_score = data.get("class_confidence", float("nan"))
         return agent_msg
 
-    def _callback_vehicle_info(self, msg):
-        # TODO: if no vehicle info received???
-        with self.lock_ego_info:
-            self.veh_spd = msg.v_ego
-            self.steer_angle = msg.steering_angle
-            self.ego_yawrate = float(msg.tractor_yawrate) # rad/s
-            self._received_ego_data = True
-        self.artic_angle = msg.artic_angle
+
 
     def _fusion_state_callback(self):
         # Publish node state
@@ -339,7 +341,74 @@ class Fusion(Node):
 
     def _fusion(self):
         start_time = self.get_clock().now()
-        
+
+    def _data_synch(self):
+        start_time = self.get_clock().now()
+        self.cur_time = self.get_clock().now().nanoseconds * 1e-9
+        t_diff_ego = self.cur_time - self.t_ego
+        t_diff_cam = self.cur_time - self.t_cam
+        if not self.replay_rosbag:
+            if t_diff_ego > self.delay_time_thrd:
+                self.d_ego = None
+                self.node_state = States.DOWNGRADE.value
+                self.get_logger().warning("ego sensor data delayed {}"
+                                          .format(t_diff_ego))
+            elif t_diff_ego > self.extrap_time_thrd:
+                with self.lock_ego_info:
+                    self._extrapolate_ego(self.d_ego, t_diff_ego)
+
+            if t_diff_cam > self.delay_time_thrd:
+                self.predict_agents = []
+                self.node_state = States.DOWNGRADE.value
+                self.get_logger().warning("cam sensor data delayed {}"
+                                          .format(t_diff_cam))
+            elif t_diff_cam > self.extrap_time_thrd:
+                with self.lock_cam_info:
+                    self.predict_agents = self._data_extrap(self.predict_agents_original, t_diff_cam)
+                    # self.get_logger().info("cam predict_agents data length {}"
+                    #         .format(len( self.predict_agents)))
+            if min(t_diff_ego, t_diff_cam) > self.delay_time_thrd:
+                self.node_state = States.ERROR.value
+                self.get_logger().error("EGO and CAM data delayed!")
+        # self.get_logger().info(
+        #     "cur_time: {}, t_diff_ego: {}, t_diff_cam: {}"
+        #     .format(self.cur_time, t_diff_ego, t_diff_cam))
+        if self.show_time:
+            timecost = (self.get_clock().now()-start_time).nanoseconds / 1e9
+            self.get_logger().info("_data_synch() timecost: {} sec"
+                                   .format(timecost))
+
+    def _data_extrap(self, agents, t_diff):
+        if not agents:
+            return []
+        t_diff = max(0.0, float(t_diff))
+        extrapolated_agents = []
+        for agent in agents:
+            synced_agent = PredictAgent()
+            synced_agent.track_id = agent.track_id
+            synced_agent.rel_vx = agent.rel_vx
+            synced_agent.rel_vy = agent.rel_vy
+            synced_agent.rel_psi = agent.rel_psi
+            synced_agent.agent_type = agent.agent_type
+            synced_agent.object_category = agent.object_category
+            synced_agent.frame_category = agent.frame_category
+            synced_agent.obj_score = agent.obj_score
+            rel_x = float(agent.rel_x)
+            rel_y = float(agent.rel_y)
+            rel_vx = float(agent.rel_vx)
+            rel_vy = float(agent.rel_vy)
+            synced_agent.rel_x = rel_x + rel_vx * t_diff
+            synced_agent.rel_y = rel_y + rel_vy * t_diff
+            extrapolated_agents.append(synced_agent)
+        return extrapolated_agents
+
+    def _extrapolate_ego(self, ego_data, t_diff):
+        if not len(ego_data):
+            return None
+        t_diff = max(0.0, float(t_diff))
+        self.veh_spd = ego_data["v_ego"] + ego_data["acceleration"] * t_diff * 3.6
+        self.steer_angle = ego_data["steering_angle"] + ego_data["steering_angle_rate"] * t_diff
+        self.ego_yawrate = float(ego_data["tractor_yawrate"]) + ego_data["tractor_yawrate_rate"] * t_diff # rad/s
 
     def _calc_fusion_state(self, st_srr):
         # print ("***st_srr", st_srr, "st_srr***")
